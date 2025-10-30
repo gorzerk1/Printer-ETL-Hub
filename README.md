@@ -1,2 +1,2 @@
-# Printer ETL Hub
-
+# InkSight
+pulling reasources from printers

@@ -1,0 +1,5 @@
+/Component/printerError/logs
+/data
+/logs
+*.xlsm
+*.json
