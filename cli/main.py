@@ -1,6 +1,8 @@
 # cli/main.py
 from __future__ import annotations
+
 from pathlib import Path
+from typing import Dict, List
 
 from settings.arguments import parse_args
 from settings.config import AppConfig
@@ -11,19 +13,22 @@ from core.pipeline import (
     step_labels_from_plan,
     PlanItem,
 )
-from adapters.script_runner import run_script, StepResult
+from adapters.script_runner import run_script
+
 
 def cprint(msg: str) -> None:
     print(msg, flush=True)
+
 
 def cdebug(msg: str, debug: bool) -> None:
     if debug:
         print(msg, flush=True)
 
-def print_menu(plan: list[PlanItem], exclude_steps, exclude_subs) -> None:
+
+def print_menu(plan: List[PlanItem], exclude_steps, exclude_subs) -> None:
     cprint("=== Pipeline Menu (demo) ===")
     labels = step_labels_from_plan(plan)
-    by_step: dict[int, list[PlanItem]] = {}
+    by_step: Dict[int, List[PlanItem]] = {}
     for it in plan:
         by_step.setdefault(it.step, []).append(it)
     for step in sorted(by_step.keys()):
@@ -41,6 +46,7 @@ def print_menu(plan: list[PlanItem], exclude_steps, exclude_subs) -> None:
                 cprint(f"{flag} Step {it.step}.{it.substep}: {it.path.name}")
     cprint("====================================")
 
+
 def print_param_menu(args, cfg: AppConfig, exclude_steps, exclude_subs) -> None:
     cprint("=== Parameters Menu (demo) ===")
     cprint(f"[{'X' if args.menu else ' '}] --menu")
@@ -54,35 +60,49 @@ def print_param_menu(args, cfg: AppConfig, exclude_steps, exclude_subs) -> None:
     else:
         cprint("[ ] --exclude")
 
-    cprint(f"[ ] --json = {cfg.default_json}")
-    cprint(f"[ ] --xlsm = {cfg.default_xlsm}")
+    # Fixed to show current config fields
+    cprint(f"[ ] --json = {cfg.printers_json}")
+    cprint(f"[ ] --xlsm = {cfg.printers_xlsm}")
     cprint(f"[ ] root = {cfg.root}")
     cprint(f"[ ] logs dir = {cfg.logs_dir}")
     cprint("================================")
+
 
 def main() -> None:
     args = parse_args()
     cfg = AppConfig.from_args(args)
 
+    # Show resolved config and exit (new flag)
+    if getattr(args, "show_config", False):
+        print("root           :", cfg.root)
+        print("logs_dir       :", cfg.logs_dir)
+        print("printers_json  :", cfg.printers_json)
+        print("printers_xlsm  :", cfg.printers_xlsm)
+        print("draft_xlsm     :", cfg.draft_xlsm)
+        print("step: convert_to_json :", cfg.pipeline.convert_to_json)
+        print("step: convert_to_excel:", cfg.pipeline.convert_to_excel)
+        for name, folder in cfg.pipeline.component_groups:
+            print(f"component {name:12}:", folder)
+        return
+
     logfile = setup_logging(cfg.logs_dir, enable_logs=args.logs)
 
-    # parse excludes
+    # Excludes (and warn on invalid)
     exclude_steps, exclude_subs, invalid_tokens = parse_excludes(args.exclude)
     for bad in invalid_tokens:
         cprint(f"[WARN] Ignoring invalid --exclude value: {bad}")
         flog(f"[WARN] Ignoring invalid --exclude value: {bad}")
 
-    # build plan (now uses config)
+    # Build plan from config
     plan = build_plan(cfg)
 
-    # but we still want to tell user if certain scripts are missing (like old code)
+    # Friendly notices if the configured step scripts are missing
     if not cfg.pipeline.convert_to_json.exists():
-        cprint("✗ Step 1: convertToJson.py not found (will be skipped)")
-        flog("convertToJson.py not found (will be skipped)")
-
+        cprint("✗ Step 1: convert_to_json.py not found (will be skipped)")
+        flog("convert_to_json.py not found (will be skipped)")
     if not cfg.pipeline.convert_to_excel.exists():
-        cprint(f"✗ convertToExcel.py not found at {cfg.pipeline.convert_to_excel} (will be skipped)")
-        flog(f"convertToExcel.py not found at {cfg.pipeline.convert_to_excel} (will be skipped)")
+        cprint(f"✗ convert_to_excel.py not found at {cfg.pipeline.convert_to_excel} (will be skipped)")
+        flog(f"convert_to_excel.py not found at {cfg.pipeline.convert_to_excel} (will be skipped)")
 
     if args.menu:
         print_menu(plan, exclude_steps, exclude_subs)
@@ -92,21 +112,24 @@ def main() -> None:
 
     labels = step_labels_from_plan(plan)
     current_major = None
-    results: list[StepResult] = []
+    results = []
 
     try:
         for it in plan:
-            # print "Step X: ..." when we enter a new major step
+            # announce each major step once
             if current_major != it.step:
                 current_major = it.step
-                label = labels.get(it.step, it.title.split(":", 1)[1].strip() if ":" in it.title else it.path.stem)
+                label = labels.get(
+                    it.step,
+                    it.title.split(":", 1)[1].strip() if ":" in it.title else it.path.stem,
+                )
                 cprint(f"Step {it.step}: {label} ...")
 
-            # skip meta
+            # meta items are headings only
             if it.substep == 0:
                 continue
 
-            # apply excludes (same logic as your original)
+            # apply excludes
             if it.substep is None:
                 if it.step in exclude_steps:
                     cprint(f"[skip] Step {it.step}")
@@ -116,7 +139,7 @@ def main() -> None:
                     cprint(f"[skip] Step {it.step}.{it.substep}")
                     continue
 
-            # run script (IO)
+            # run the step
             res = run_script(it, cwd=cfg.root, debug=args.debug)
             if res.ok:
                 cprint(f"✓ {it.title} ({res.elapsed_s:.2f}s)")
@@ -129,11 +152,7 @@ def main() -> None:
         if failures:
             cprint("\nSome steps failed. See log for details.")
             for r in failures:
-                title = (
-                    f"Step {r.item.step}"
-                    if r.item.substep is None
-                    else f"Step {r.item.step}.{r.item.substep}"
-                )
+                title = f"Step {r.item.step}" if r.item.substep is None else f"Step {r.item.step}.{r.item.substep}"
                 flog(f"[FAIL] {title} | exit={r.exit_code} | note={r.note}", level=40)
             flog("=== Pipeline End (with failures) ===")
         else:
@@ -146,6 +165,7 @@ def main() -> None:
             flog(f"Log saved to: {logfile}")
             if args.debug:
                 cprint(f"(log: {logfile})")
+
 
 if __name__ == "__main__":
     main()

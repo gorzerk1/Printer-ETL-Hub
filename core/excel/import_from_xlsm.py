@@ -1,14 +1,15 @@
-import argparse, json, math, shutil
+# core/excel/import_from_xlsm.py
+from __future__ import annotations
 from pathlib import Path
 from datetime import date, datetime
+import math
 
 try:
-    import pandas as pd
-    import numpy as np
+    import pandas as pd  # type: ignore
+    import numpy as np   # type: ignore
     _HAS_PANDAS = True
 except Exception:
     _HAS_PANDAS = False
-
 
 SHEET_SPECS = {
     "Company_Grouped": {
@@ -27,14 +28,15 @@ def _norm(s):
     return " ".join(str(s).strip().lower().split())
 
 def json_serializer(obj):
+    # same as in old script
     try:
-        import pandas as _pd
+        import pandas as _pd  # noqa
     except Exception:
         _pd = None
     if (_pd is not None and isinstance(obj, getattr(_pd, "Timestamp", ()))) or isinstance(obj, (datetime, date)):
         return obj.isoformat()
     try:
-        import numpy as _np
+        import numpy as _np  # noqa
         if isinstance(obj, _np.integer):
             return int(obj)
         if isinstance(obj, _np.floating):
@@ -81,7 +83,13 @@ def _row_to_record(row_vals, keys, mapping, limit):
         return None
     return out
 
-def load_with_pandas_hybrid(xl_path: Path, sheets):
+def load_sheets(xlsm_path: Path, sheets: list[str]) -> dict:
+    if _HAS_PANDAS:
+        return _load_with_pandas(xlsm_path, sheets)
+    else:
+        return _load_with_openpyxl(xlsm_path, sheets)
+
+def _load_with_pandas(xl_path: Path, sheets: list[str]) -> dict:
     import pandas as pd
     import numpy as np
     out = {}
@@ -101,7 +109,7 @@ def load_with_pandas_hybrid(xl_path: Path, sheets):
         out[sheet] = records
     return out
 
-def load_with_openpyxl_hybrid(xl_path: Path, sheets):
+def _load_with_openpyxl(xl_path: Path, sheets: list[str]) -> dict:
     from openpyxl import load_workbook
     wb = load_workbook(filename=str(xl_path), data_only=True, read_only=False)
     out = {}
@@ -124,59 +132,3 @@ def load_with_openpyxl_hybrid(xl_path: Path, sheets):
                 records.append(rec)
         out[sheet] = records
     return out
-
-def _resolve_xlsm(p: str | Path) -> Path:
-    p = Path(p).expanduser().resolve()
-    if p.suffix == "":
-        p = p.with_suffix(".xlsm")
-    if p.suffix.lower() != ".xlsm":
-        raise SystemExit(f"Only .xlsm files are supported (got {p.suffix}).")
-    return p
-
-def copy_draft_to_prod(draft_path: Path, prod_path: Path):
-    prod_path.parent.mkdir(parents=True, exist_ok=True)
-    if draft_path.samefile(prod_path):
-        # Nothing to do; already the same file
-        return
-    shutil.copy2(draft_path, prod_path)
-
-def main():
-    parser = argparse.ArgumentParser()
-    # New: explicit draft/prod paths. Defaults implement your requested behavior.
-    parser.add_argument("--draft", default="data/printersDraft.xlsm", help="Path to the draft xlsm")
-    parser.add_argument("--prod", default="printers.xlsm", help="Path to the production xlsm to overwrite")
-    parser.add_argument("--output","-o", default=None, help="JSON output path; defaults to <prod>.json")
-    parser.add_argument("--sheets", nargs="+", default=["Company_Grouped","Branches_Grouped"])
-    args = parser.parse_args()
-
-    draft_path = _resolve_xlsm(args.draft)
-    if not draft_path.exists():
-        raise SystemExit(f"Draft Excel not found (expected .xlsm): {draft_path}")
-
-    prod_path = _resolve_xlsm(args.prod)
-
-    # 1) Overwrite prod with the draft
-    copy_draft_to_prod(draft_path, prod_path)
-
-    # 2) Convert (post-overwrite) to JSON, defaulting next to prod
-    out_path = Path(args.output).expanduser().resolve() if args.output else prod_path.with_suffix(".json")
-
-    for s in args.sheets:
-        if s not in SHEET_SPECS:
-            raise SystemExit(f"Unsupported sheet: {s}")
-
-    # Read from the production file (now updated from the draft)
-    if _HAS_PANDAS:
-        data = load_with_pandas_hybrid(prod_path, args.sheets)
-    else:
-        data = load_with_openpyxl_hybrid(prod_path, args.sheets)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, default=json_serializer)
-
-    print(f"Overwrote {prod_path} from {draft_path}")
-    print(f"Wrote {out_path}")
-
-if __name__ == "__main__":
-    main()

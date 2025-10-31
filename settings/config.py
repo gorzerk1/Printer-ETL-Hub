@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
+import os
 
 @dataclass(frozen=True)
 class PipelineConfig:
@@ -13,41 +14,53 @@ class PipelineConfig:
 class AppConfig:
     root: Path
     logs_dir: Path
-    default_json: str
-    default_xlsm: str
+    printers_json: Path
+    printers_xlsm: Path
+    draft_xlsm: Path
+    data_dir: Path
     pipeline: PipelineConfig
 
     @classmethod
     def load(cls) -> "AppConfig":
-        # detect project root (same idea as your old ROOT = Path(__file__).resolve().parent)
         root = Path(__file__).resolve().parents[1]
+        data_dir = root / "data"
 
-        component_root = root / "Component"
+        def env_path(var: str, default: Path) -> Path:
+            v = os.getenv(var)
+            if not v:
+                return default
+            p = Path(v).expanduser()
+            return p if p.is_absolute() else (root / p)
 
-        pipeline_cfg = PipelineConfig(
-            convert_to_json = root / "convertToJson.py",
-            convert_to_excel = root / "convertToExcel.py",
+        pipeline = PipelineConfig(
+            convert_to_json = root / "cli" / "convert_to_json.py",   # or root files if you kept them
+            convert_to_excel = root / "cli" / "convert_to_excel.py",
             component_groups = [
-                ("TonerFinder", component_root / "tonerFinder"),
-                ("printerError", component_root / "printerError"),
-                ("tonerType", component_root / "tonerType"),
+                ("TonerFinder", root / "Component" / "tonerFinder"),
+                ("printerError", root / "Component" / "printerError"),
+                ("tonerType", root / "Component" / "tonerType"),
             ],
         )
 
         return cls(
             root = root,
             logs_dir = root / "logs" / "main",
-            default_json = "printers.json",
-            default_xlsm = "printers.xlsm",
-            pipeline = pipeline_cfg,
+            # 🔽 defaults under data/, but overridable via env
+            printers_json = env_path("PRINTERS_JSON", root / "printers.json"),
+            printers_xlsm = env_path("PRINTERS_XLSM", root / "printers.xlsm"),
+            draft_xlsm    = env_path("PRINTERS_DRAFT_XLSM", data_dir / "printersDraft.xlsm"),
+            data_dir = data_dir,
+            pipeline = pipeline,
         )
 
     @classmethod
     def from_args(cls, args) -> "AppConfig":
         cfg = cls.load()
-        # allow CLI overrides (like your original --json/--xlsm)
+        # CLI flags (if provided) beat env/defaults
         if getattr(args, "json", None):
-            cfg.default_json = args.json
+            p = Path(args.json).expanduser()
+            cfg.printers_json = p if p.is_absolute() else cfg.root / p
         if getattr(args, "xlsm", None):
-            cfg.default_xlsm = args.xlsm
+            p = Path(args.xlsm).expanduser()
+            cfg.printers_xlsm = p if p.is_absolute() else cfg.root / p
         return cfg

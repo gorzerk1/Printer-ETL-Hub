@@ -17,10 +17,23 @@ class StepResult:
         self.elapsed_s = elapsed_s
         self.note = note
 
-def run_script(item: PlanItem, cwd: Path, debug: bool) -> StepResult:
-    cmd = [sys.executable, str(item.path), *item.args]
+def run_script(item: PlanItem, cwd: Path, debug: bool = False) -> StepResult:
+    # Decide how to launch: module for things under cli/, file path otherwise
+    cmd = None
+    module = None
+    try:
+        rel = item.path.resolve().relative_to(cwd.resolve())
+        if rel.parts and rel.parts[0] == "cli" and item.path.suffix == ".py":
+            # build dotted module name, e.g. cli.convert_to_json
+            module = ".".join(Path(*rel.parts).with_suffix("").parts)
+            cmd = [sys.executable, "-m", module, *item.args]
+    except Exception:
+        pass
 
-    # debug prints (CLI-like, but we keep them here because it's 100% tied to script running)
+    if cmd is None:
+        # fallback: run by file path (for Component scripts etc.)
+        cmd = [sys.executable, str(item.path), *item.args]
+
     if debug:
         print(f"\n----- {item.title} -----", flush=True)
         print(f"Script: {item.path}", flush=True)
@@ -33,13 +46,7 @@ def run_script(item: PlanItem, cwd: Path, debug: bool) -> StepResult:
 
     start = time.perf_counter()
     try:
-        proc = subprocess.run(
-            cmd,
-            cwd=cwd,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, check=False)
     except Exception as e:
         elapsed = time.perf_counter() - start
         msg = f"{item.title}: failed to launch: {e!r}"

@@ -16,9 +16,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-e", "--exclude", action="append", default=[])
     p.add_argument("-d", "--debug", type=_str2bool, default=False)
     p.add_argument("-l", "--logs", type=_str2bool, default=True)
-    # we keep these as strings; config will combine them with root
-    p.add_argument("--json", default=None)
-    p.add_argument("--xlsm", default=None)
+    p.add_argument("--show-config", action="store_true",
+                   help="print resolved config paths and exit")
     return p
 
 def parse_args() -> argparse.Namespace:
