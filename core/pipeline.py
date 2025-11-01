@@ -38,6 +38,7 @@ def list_scripts(folder: Path) -> List[Path]:
 def parse_excludes(tokens: List[str]) -> Tuple[Set[int], Set[Tuple[int, int]], List[str]]:
     """
     Parse values from --exclude.
+
     returns:
       - set of whole steps to skip, e.g. {2, 3}
       - set of (step, substep) to skip, e.g. {(2,1), (3,2)}
@@ -63,13 +64,14 @@ def parse_excludes(tokens: List[str]) -> Tuple[Set[int], Set[Tuple[int, int]], L
     return exclude_steps, exclude_subs, invalid
 
 
-def build_plan(cfg: AppConfig) -> List[PlanItem]:
+def build_plan(cfg: AppConfig, *, collect_warnings: bool = False):
     """
     Build the list of steps the pipeline will run.
-    Uses the paths from settings.config.AppConfig
-    (so we can point to root/convertToJson.py or cli/convert_to_json.py — config decides).
+    Uses the paths from settings.config.AppConfig (so we can point to
+    root/convertToJson.py or cli/convert_to_json.py — config decides). :contentReference[oaicite:3]{index=3}
     """
     plan: List[PlanItem] = []
+    warnings: List[str] = []
     step_num = 1
 
     # 1) convert-to-json
@@ -81,16 +83,19 @@ def build_plan(cfg: AppConfig) -> List[PlanItem]:
                 substep=None,
                 title="Step 1: convertToJson",
                 path=conv_json,
-                args=[],   # old script didn't need args
+                args=[],
             )
         )
-    # if it doesn't exist, we just don't add it
+    else:
+        if collect_warnings:
+            warnings.append(f"{conv_json} not found; 'convert to json' will be skipped.")
     step_num += 1
 
     # 2) component groups (printerError, tonerFinder, tonerType, ...)
     for label, folder in cfg.pipeline.component_groups:
         scripts = list_scripts(folder)
         if not scripts:
+            # folder could be empty – not an error
             continue
 
         major = step_num
@@ -101,58 +106,64 @@ def build_plan(cfg: AppConfig) -> List[PlanItem]:
                 step=major,
                 substep=0,
                 title=f"Step {major}: {label}",
-                path=scripts[0],
+                path=folder,
                 args=[],
             )
         )
 
-        for i, p in enumerate(scripts, start=1):
+        sub = 1
+        for script in scripts:
             plan.append(
                 PlanItem(
                     step=major,
-                    substep=i,
-                    title=f"Step {major}.{i}: {p.stem}",
-                    path=p,
+                    substep=sub,
+                    title=f"Step {major}.{sub}: {script.name}",
+                    path=script,
                     args=[],
                 )
             )
+            sub += 1
 
         step_num += 1
 
-    # 3) convert-to-excel
+    # 3) convert-to-excel (last)
     conv_excel = cfg.pipeline.convert_to_excel
     if conv_excel.exists():
-        # your original convertToExcel.py expects 2 args: json_path, xlsm_path
         plan.append(
             PlanItem(
                 step=step_num,
                 substep=None,
-                title=f"Step {step_num}: convertToExcel",
+                title="Step {}: convertToExcel".format(step_num),
                 path=conv_excel,
                 args=[],
             )
         )
+    else:
+        if collect_warnings:
+            warnings.append(f"{conv_excel} not found; 'convert to excel' will be skipped.")
 
+    if collect_warnings:
+        return plan, warnings
     return plan
 
 
 def step_labels_from_plan(plan: List[PlanItem]) -> Dict[int, str]:
     """
-    Build a {step_number: label} map so CLI can print "Step 2: tonerFinder ..."
+    existing behavior – keep it
     """
     labels: Dict[int, str] = {}
-
-    # first, pull labels from meta items
     for it in plan:
         if it.substep == 0:
+            # meta: "Step X: Label"
             labels[it.step] = it.title.split(":", 1)[1].strip()
-
-    # then fill in from real items
-    for it in plan:
-        if it.step not in labels:
-            if ":" in it.title:
-                labels[it.step] = it.title.split(":", 1)[1].strip()
-            else:
-                labels[it.step] = it.path.stem
-
+        elif it.substep is None and it.step not in labels:
+            labels[it.step] = it.title
     return labels
+
+
+# 👇 NEW: used by cli.ui so UI doesn’t have to regroup the list
+def group_plan_by_step(plan: List[PlanItem]) -> Dict[int, List[PlanItem]]:
+    grouped: Dict[int, List[PlanItem]] = {}
+    for it in plan:
+        grouped.setdefault(it.step, []).append(it)
+    return grouped

@@ -1,8 +1,9 @@
 # cli/ui.py
 from __future__ import annotations
 from typing import Dict, List, Iterable
+
 from settings.config import AppConfig
-from core.pipeline import step_labels_from_plan, PlanItem
+from core.pipeline import step_labels_from_plan, group_plan_by_step, PlanItem
 
 
 def cprint(msg: str) -> None:
@@ -13,13 +14,12 @@ def cprint(msg: str) -> None:
 def print_menu(plan: List[PlanItem], exclude_steps: Iterable[int], exclude_subs: Iterable[tuple[int, int]]) -> None:
     cprint("=== Pipeline Menu (demo) ===")
     labels = step_labels_from_plan(plan)
-    by_step: Dict[int, List[PlanItem]] = {}
-    for it in plan:
-        by_step.setdefault(it.step, []).append(it)
+    grouped = group_plan_by_step(plan)
 
-    for step in sorted(by_step.keys()):
-        cprint(f"Step {step}: {labels[step]} ...")
-        for it in by_step[step]:
+    for step in sorted(grouped.keys()):
+        label = labels.get(step, f"Step {step}")
+        cprint(f"Step {step}: {label} ...")
+        for it in grouped[step]:
             if it.substep == 0:
                 # meta/header items – don’t print as a runnable step
                 continue
@@ -47,7 +47,7 @@ def print_param_menu(args, cfg: AppConfig, exclude_steps, exclude_subs) -> None:
     else:
         cprint("[ ] --exclude")
 
-    # fixed to show current config fields
+    # show current config fields
     cprint(f"[ ] --json = {cfg.printers_json}")
     cprint(f"[ ] --xlsm = {cfg.printers_xlsm}")
     cprint(f"[ ] root = {cfg.root}")
@@ -56,13 +56,5 @@ def print_param_menu(args, cfg: AppConfig, exclude_steps, exclude_subs) -> None:
 
 
 def print_config(cfg: AppConfig) -> None:
-    cprint("Resolved configuration:")
-    cprint(f"root           : {cfg.root}")
-    cprint(f"logs_dir       : {cfg.logs_dir}")
-    cprint(f"printers_json  : {cfg.printers_json}")
-    cprint(f"printers_xlsm  : {cfg.printers_xlsm}")
-    cprint(f"draft_xlsm     : {cfg.draft_xlsm}")
-    cprint(f"step: convert_to_json  : {cfg.pipeline.convert_to_json}")
-    cprint(f"step: convert_to_excel : {cfg.pipeline.convert_to_excel}")
-    for name, folder in cfg.pipeline.component_groups:
-        cprint(f"component {name:12} : {folder}")
+    for line in cfg.pretty_lines():
+        cprint(line)

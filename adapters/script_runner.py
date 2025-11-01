@@ -4,10 +4,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 
 from settings.logging_setup import flog
 from core.pipeline import PlanItem
+
 
 class StepResult:
     def __init__(self, item: PlanItem, ok: bool, exit_code: Optional[int], elapsed_s: float, note: str = ""):
@@ -17,21 +18,23 @@ class StepResult:
         self.elapsed_s = elapsed_s
         self.note = note
 
-def run_script(item: PlanItem, cwd: Path, debug: bool = False) -> StepResult:
-    # Decide how to launch: module for things under cli/, file path otherwise
-    cmd = None
-    module = None
-    try:
-        rel = item.path.resolve().relative_to(cwd.resolve())
-        if rel.parts and rel.parts[0] == "cli" and item.path.suffix == ".py":
-            # build dotted module name, e.g. cli.convert_to_json
-            module = ".".join(Path(*rel.parts).with_suffix("").parts)
-            cmd = [sys.executable, "-m", module, *item.args]
-    except Exception:
-        pass
 
-    if cmd is None:
-        # fallback: run by file path (for Component scripts etc.)
+def _module_for_path(path: Path, cwd: Path) -> Optional[str]:
+    try:
+        rel = path.resolve().relative_to(cwd.resolve())
+    except Exception:
+        return None
+    if path.suffix.lower() != ".py":
+        return None
+    parts = Path(*rel.parts).with_suffix("").parts
+    return ".".join(parts) if parts else None
+
+
+def run_script(item: PlanItem, cwd: Path, debug: bool = False) -> StepResult:
+    module = _module_for_path(item.path, cwd)
+    if module:
+        cmd = [sys.executable, "-m", module, *item.args]
+    else:
         cmd = [sys.executable, str(item.path), *item.args]
 
     if debug:
@@ -71,7 +74,11 @@ def run_script(item: PlanItem, cwd: Path, debug: bool = False) -> StepResult:
     flog(f"{item.title}: exit code {proc.returncode} ({elapsed:.2f}s)")
 
     if proc.returncode == 0:
-        # we do NOT print here; CLI prints
         return StepResult(item, ok=True, exit_code=0, elapsed_s=elapsed)
     else:
         return StepResult(item, ok=False, exit_code=proc.returncode, elapsed_s=elapsed)
+
+
+def summarize_results(results: List[StepResult]) -> tuple[bool, List[StepResult]]:
+    failed = [r for r in results if not r.ok]
+    return (len(failed) == 0, failed)

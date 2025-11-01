@@ -8,6 +8,7 @@ from settings.config import AppConfig
 from settings.logging_setup import setup_logging
 from adapters.excel_io import resolve_xlsm, open_workbook, save_workbook, backup_workbook
 from core.excel.update_from_json import build_id_map, update_sheet, update_branches_grouped
+from core.enrich.employees import build_employees_index
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Update printers XLSM from printers.json")
@@ -41,12 +42,9 @@ def main() -> None:
     for ws in wb.worksheets:
         total_updates += update_sheet(ws, id_map)
 
-    # employees enrichment (same idea as old script)
     if employees_json.exists():
         with employees_json.open("r", encoding="utf-8") as ef:
             employees_data = json.load(ef)
-        # build index (we can just reuse build_employees_index from old script if we copy it here)
-        from core.excel.update_from_json import build_employees_index  # we can add it there too
         employees_index = build_employees_index(employees_data)
         if "Branches_Grouped" in wb.sheetnames:
             ws_bg = wb["Branches_Grouped"]

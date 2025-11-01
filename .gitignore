@@ -3,3 +3,7 @@
 /logs
 *.xlsm
 *.json
+*.pyc
+*.pyc
+*.log
+*.pyc
